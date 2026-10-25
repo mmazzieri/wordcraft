@@ -27,7 +27,6 @@ use std::num::NonZeroU16;
 use std::sync::Arc;
 
 use craft_pdf::write::{self, Metadata, WriteError, Writer, backend as krilla};
-use krilla::action::{Action, LinkAction};
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::color::rgb;
 use krilla::destination::XyzDestination;
@@ -693,20 +692,10 @@ fn shape_path(kind: ShapeKind, r: &Rect, corner: Option<u32>) -> Option<Path> {
             pb.move_to(x0, y0);
             pb.line_to(x1, y1);
         }
-        ShapeKind::Arrow => {
-            let h = r.h;
-            poly(
-                &mut pb,
-                &[
-                    (x0, cy - h * 0.2),
-                    (x1 - h * 0.5, cy - h * 0.2),
-                    (x1 - h * 0.5, y0),
-                    (x1, cy),
-                    (x1 - h * 0.5, y1),
-                    (x1 - h * 0.5, cy + h * 0.2),
-                    (x0, cy + h * 0.2),
-                ],
-            )
+        ShapeKind::Arrow | ShapeKind::ArrowLeft | ShapeKind::ArrowUp | ShapeKind::ArrowDown => {
+            let pts: Vec<(f32, f32)> =
+                wordcraft_doc::wrap::arrow_outline(kind, r.w, r.h).iter().map(|&(u, v)| (x0 + u * r.w, y0 + v * r.h)).collect();
+            poly(&mut pb, &pts)
         }
         ShapeKind::Star => {
             let pts: Vec<(f32, f32)> = (0..10)
@@ -1059,6 +1048,10 @@ impl Exporter<'_> {
         tree
     }
 
+    /// Paint one display item on the PDF surface in its current point-coordinate system.
+    /// Nested clips and turns are pushed and popped around their child items. Shape and path
+    /// outlines set their own dash and cap state, then clear their fill and stroke; ink retains
+    /// round caps independently of the optional shape-outline setting.
     fn draw(&mut self, s: &mut Surface, d: &Draw) {
         match d {
             Draw::Figure { draws, .. } => {
@@ -1093,7 +1086,7 @@ impl Exporter<'_> {
             }
             Draw::Line { x0, y0, x1, y1, width, color, stroke, alpha, .. } => self.line(s, (*x0, *y0, *x1, *y1), *width, *color, *stroke, *alpha),
             Draw::Image { rect, media, crop, alpha, fx, .. } => self.picture(s, rect, media, crop, *alpha, *fx),
-            Draw::Path { segs, fill: f, stroke, stroke_width, dash } => {
+            Draw::Path { segs, fill: f, stroke, stroke_width, dash, cap } => {
                 let mut pb = PathBuilder::new();
                 append_path(&mut pb, &wordcraft_layout::display::seg_path(segs));
                 let Some(p) = pb.finish() else { return };
@@ -1103,6 +1096,7 @@ impl Exporter<'_> {
                     // Width 0 (or none) is a hairline.
                     width: if stroke_width.is_finite() && *stroke_width > 0.0 { stroke_width.clamp(0.25, 200.0) } else { 0.75 },
                     dash: (!dash.is_empty()).then(|| StrokeDash { array: dash.clone(), offset: 0.0 }),
+                    line_cap: pdf_line_cap(*cap),
                     ..Default::default()
                 }));
                 if f.is_some() || stroke.is_some() {
@@ -1141,7 +1135,7 @@ impl Exporter<'_> {
                 s.draw_path(&p);
                 s.set_stroke(None);
             }
-            Draw::Shape { rect, kind, fill: f, stroke, stroke_width, effects, corner, dash } => {
+            Draw::Shape { rect, kind, fill: f, stroke, stroke_width, effects, corner, dash, cap } => {
                 let Some(p) = shape_path(*kind, rect, *corner) else { return };
                 let can_fill = *kind != ShapeKind::Line;
                 let fx = effects.sanitized();
@@ -1166,6 +1160,7 @@ impl Exporter<'_> {
                     paint: rgb::Color::new(c.0, c.1, c.2).into(),
                     width: if stroke_width.is_finite() { stroke_width.clamp(0.25, 200.0) } else { 0.75 },
                     dash: (!dash.is_empty()).then(|| StrokeDash { array: dash.clone(), offset: 0.0 }),
+                    line_cap: pdf_line_cap(*cap),
                     ..Default::default()
                 }));
                 if f.is_some() && can_fill || stroke.is_some() {
@@ -1611,11 +1606,11 @@ impl Exporter<'_> {
                     None => continue,
                 }
             } else {
-                let url = target.trim();
-                if url.is_empty() {
-                    continue;
+                // Unsafe targets (javascript:, file:, shares, other schemes) get no link; the text stays.
+                match write::uri_target(target) {
+                    Some(t) => t,
+                    None => continue,
                 }
-                Target::Action(Action::Link(LinkAction::new(url.to_string())))
             };
             v.push(Annotation::new_link(LinkAnnotation::new(rect, t), Some(target.clone())));
         }
@@ -1910,6 +1905,10 @@ fn path_from(b: &kurbo::BezPath) -> Option<Path> {
 /// once. Corrected or not, a picture goes through the same size checks and decode as the screen
 /// (`wordcraft_render::decode_pixmap`), so it never fails here only because it has corrections.
 fn load_image(data: &Arc<Vec<u8>>, fx: PicFx) -> Option<Image> {
+    // The shared probe also charges what the decoder holds beside its output (#3644).
+    if !wordcraft_geom::picture::probe(data).is_ok_and(|p| p.fits(wordcraft_geom::MAX_DECODED_BYTES)) {
+        return None;
+    }
     load_image_within(data, fx, wordcraft_geom::MAX_DECODED_BYTES)
 }
 
@@ -1945,6 +1944,15 @@ fn decode_limited(data: &[u8]) -> image::ImageResult<image::DynamicImage> {
     limits.max_image_height = Some(MAX_IMAGE_SIDE);
     reader.limits(limits);
     reader.decode()
+}
+
+/// Map the document cap to the PDF backend for both shape and path outlines.
+fn pdf_line_cap(cap: wordcraft_doc::connector::LineCap) -> LineCap {
+    match cap {
+        wordcraft_doc::connector::LineCap::Flat => LineCap::Butt,
+        wordcraft_doc::connector::LineCap::Square => LineCap::Square,
+        wordcraft_doc::connector::LineCap::Round => LineCap::Round,
+    }
 }
 
 #[cfg(test)]
