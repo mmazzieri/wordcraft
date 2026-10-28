@@ -1,4 +1,5 @@
 use super::*;
+use wordcraft_doc::picfx::PicFx;
 
 fn png(w: u32, h: u32) -> Vec<u8> {
     let img = image::RgbaImage::from_fn(w, h, |x, y| {

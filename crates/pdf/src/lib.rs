@@ -43,7 +43,6 @@ use krilla::tagging::{Artifact, ArtifactType, ContentTag, Identifier, Node, Span
 use krilla::text::{Font, GlyphId, KrillaGlyph};
 use wordcraft_doc::graphic::GraphicKind;
 use wordcraft_doc::para::{InlineObject, ShapeKind};
-use wordcraft_doc::picfx::PicFx;
 use wordcraft_doc::{Document, Path as DocPath, Rgb, StoryRef};
 use wordcraft_fonts::FaceRef;
 use wordcraft_geom::Rect;
@@ -66,7 +65,7 @@ pub use export::{export, export_layout};
 #[cfg(test)]
 use exporter::Exporter;
 #[cfg(test)]
-use glyphs::{cluster_ends, left_to_right, split_clusters, visual_order};
+use glyphs::{baseline, cluster_ends, left_to_right, split_clusters, visual_order};
 #[cfg(test)]
 use metadata::{civil, parse_iso};
 pub use options::{PdfError, PdfOptions};

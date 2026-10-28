@@ -117,6 +117,16 @@ fn wordml_2003_sample() -> String {
     )
 }
 
+/// Word 2003 XML pictures keep Word's Washout (gain 0.3, black level 0.35) as brightness and
+/// contrast (#1711).
+#[test]
+fn word_2003_xml_picture_keeps_washout() {
+    let doc = read_xml(wordml_2003_sample().as_bytes()).unwrap();
+    let ps = paras(&doc);
+    let pic = ps.iter().flat_map(|p| p.objects.iter()).find(|o| matches!(o, InlineObject::Image { .. }));
+    assert!(matches!(pic, Some(InlineObject::Image { fx, .. }) if (fx.bright - 70_000).abs() <= 2 && (fx.contrast + 70_000).abs() <= 2), "{pic:?}");
+}
+
 #[test]
 fn imports_word_2003_xml() {
     let xml = wordml_2003_sample();
@@ -168,8 +178,6 @@ fn imports_word_2003_xml() {
 
     let pic = ps.iter().flat_map(|p| p.objects.iter()).find(|o| matches!(o, InlineObject::Image { .. }));
     assert!(matches!(pic, Some(InlineObject::Image { w, h, .. }) if *w == 36.0 && *h == 18.0));
-    // Washout (gain 0.3, black level 0.35) reaches the picture (#1711).
-    assert!(matches!(pic, Some(InlineObject::Image { fx, .. }) if (fx.bright - 70_000).abs() <= 2 && (fx.contrast + 70_000).abs() <= 2), "{pic:?}");
     assert_eq!(doc.media.len(), 1);
 
     assert_eq!(doc.last_section.page_w, 612.0);
