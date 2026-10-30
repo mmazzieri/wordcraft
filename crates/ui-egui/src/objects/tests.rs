@@ -204,8 +204,16 @@ fn ctrl_shift_drag_copies_an_inline_picture_at_the_text_cursor() {
     use egui::{Event, Modifiers, PointerButton};
     let mut app = WordApp::new(wordcraft_engine::Session::new(Document::from_text("First paragraph.\nSecond paragraph.")), Default::default());
     app.run("view.commentsPane", json!({"value": false})).unwrap();
-    let image =
-        InlineObject::Image { media: String::new(), w: 80.0, h: 40.0, alt: String::new(), float: Default::default(), crop: [0.0; 4], ole: None };
+    let image = InlineObject::Image {
+        media: String::new(),
+        w: 80.0,
+        h: 40.0,
+        alt: String::new(),
+        float: Default::default(),
+        crop: [0.0; 4],
+        fx: Default::default(),
+        ole: None,
+    };
     app.session.doc.insert_object(&Pos::body(1, 0), image, &Default::default()).unwrap();
     app.session.touch();
     app.run("select.range", json!({"anchor": Pos::body(1, 0), "focus": Pos::body(1, 3)})).unwrap();
