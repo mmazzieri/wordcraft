@@ -1602,6 +1602,52 @@ fn a_page_break_then_a_new_page_makes_one_page() {
 }
 
 #[test]
+fn a_page_break_then_an_empty_section_mark_makes_one_page() {
+    crate::test_fonts();
+    use wordcraft_doc::section::{SectionProps, SectionStart};
+    // "Before", a page break, then an empty paragraph carrying a next-page section break, then
+    // "After" in the next section. Measured in Word: the empty mark stays on page 1 with the
+    // break, and "After" starts page 2; no blank page of the first section between them. The
+    // same when the break ends "Before" itself, when the mark asks for a page break before, and
+    // when the next section starts on an even page (page 2 already is one).
+    let layout = |text: &str, mark: usize, edit: &dyn Fn(&mut Document)| {
+        let mut d = Document::from_text(text);
+        d.para_mut(StoryRef::Body, &Path::top(mark)).unwrap().section = Some(Box::new(SectionProps::default()));
+        edit(&mut d);
+        lay(&d)
+    };
+    let pages = |text: &str, mark: usize, edit: &dyn Fn(&mut Document)| {
+        layout(text, mark, edit).pages.iter().map(|p| (p.first_block, p.section)).collect::<Vec<_>>()
+    };
+    let none = |_: &mut Document| {};
+    let one_page_each = vec![(0, 0), (3, 1)];
+    assert_eq!(pages("Before\n\u{000C}\n\nAfter", 2, &none), one_page_each, "a paragraph of only a page break");
+    // The mark is still laid out (for the caret), on page 1 with the break.
+    let l = layout("Before\n\u{000C}\n\nAfter", 2, &none);
+    let mark_page = l.pages.iter().position(|p| p.items.iter().any(|i| matches!(i, Placed::Lines { path, .. } if path.0 == [2])));
+    assert_eq!(mark_page, Some(0), "the empty mark's line");
+    assert_eq!(pages("Before\n\u{000C}\n\u{000C}\n\nAfter", 3, &none), vec![(0, 0), (1, 0), (4, 1)], "two page breaks: one blank page, as in Word");
+    assert_eq!(pages("Before\u{000C}\n\nAfter", 1, &none), vec![(0, 0), (2, 1)], "the break ending the paragraph before");
+    let break_before = |d: &mut Document| d.para_mut(StoryRef::Body, &Path::top(1)).unwrap().props.page_break_before = Some(true);
+    assert_eq!(pages("Before\n\nAfter", 1, &break_before), vec![(0, 0), (2, 1)], "a page break before on the mark");
+    let even = |d: &mut Document| d.last_section.start = SectionStart::EvenPage;
+    assert_eq!(pages("Before\n\u{000C}\n\nAfter", 2, &even), one_page_each, "the next section on an even page");
+    // Only the mark right after the break: an empty paragraph between them takes page 2 (Word: 3
+    // pages), and a continuous section after the mark starts on the break's page 2.
+    assert_eq!(pages("Before\n\u{000C}\n\n\nAfter", 3, &none).len(), 3, "an empty paragraph between the break and the mark");
+    let continuous = |d: &mut Document| d.last_section.start = SectionStart::Continuous;
+    assert_eq!(pages("Before\n\u{000C}\n\nAfter", 2, &continuous).len(), 2, "a continuous section after the mark");
+    // An odd-page section still gets its filler page (Word: 3 pages), now instead of the blank
+    // page the mark made; a mark holding text, or after a column break, keeps page 2 (Word: 3).
+    let odd = |d: &mut Document| d.last_section.start = SectionStart::OddPage;
+    let odd_pages = pages("Before\n\u{000C}\n\nAfter", 2, &odd);
+    assert_eq!((odd_pages.len(), odd_pages.last().copied()), (3, Some((3, 1))), "the next section on an odd page: {odd_pages:?}");
+    assert_eq!(pages("Before\n\u{000C}\nMark text\nAfter", 2, &none), vec![(0, 0), (1, 0), (3, 1)], "a mark holding text");
+    let column = format!("Before\n{}\n\nAfter", wordcraft_doc::para::COLUMN_BREAK);
+    assert_eq!(pages(&column, 2, &none).len(), 3, "a column break before the mark");
+}
+
+#[test]
 fn page_numbers_can_restart_at_zero() {
     crate::test_fonts();
     // `w:pgNumType w:start="0"`: a cover page numbered 0, so the page after it reads 1.

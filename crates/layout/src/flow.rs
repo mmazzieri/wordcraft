@@ -596,6 +596,8 @@ impl<'a> Flow<'a> {
                 self.p.text.get(l.start..l.stop).is_some_and(|t| !t.is_empty() && t.chars().all(|c| c == wordcraft_doc::para::PAGE_BREAK))
             });
         match forced {
+            // The page the next section starts is the one the break asks for (Word).
+            Some(LineEnd::PageBreak) if mark_with_break && closing_mark_follows(ctx, pb, block) => {}
             Some(LineEnd::PageBreak) if mark_with_break => {
                 pb.new_page(block, body_top);
                 pb.after_break_mark = true;
@@ -830,12 +832,26 @@ fn add_items(pb: &mut PageBuilder, behind: Vec<Placed>, items: Vec<Placed>) {
     }
 }
 
+/// An empty paragraph carrying a section break: the mark that closes its section.
+fn empty_closing_mark(p: &Paragraph) -> bool {
+    p.section.is_some() && p.text.is_empty() && p.objects.is_empty()
+}
+
+/// Whether the block after `block` is the empty mark closing a section that a section starting
+/// on a new page follows. A page break right before it starts no page of its own: measured in
+/// Word, the mark stays on the break's page and the next section starts the new one, instead of
+/// a page holding only the mark (and none of the next section's headers).
+fn closing_mark_follows(ctx: &Ctx, pb: &PageBuilder, block: usize) -> bool {
+    pb.next_starts_page && block.checked_add(1).and_then(|i| ctx.doc.body.get(i)).and_then(|b| b.as_para()).is_some_and(empty_closing_mark)
+}
+
 fn place_para_in_flow(ctx: &mut Ctx, pb: &mut PageBuilder, p: &Paragraph, block: usize, body_top: f32) {
     let mut f = Flow::new(ctx, pb, p, (block, body_top));
     let spot = |pb: &PageBuilder| (pb.pages.len(), pb.col);
     let placed_at = spot(pb);
-    // A continuous section's top mid-page is not a page top, so the break still applies.
-    let broke_before = f.pl.rp.page_break_before && !pb.fresh() && !pb.web;
+    // A continuous section's top mid-page is not a page top, so the break still applies. An empty
+    // mark closing a section before a new page breaks no page before it (Word).
+    let broke_before = f.pl.rp.page_break_before && !pb.fresh() && !pb.web && !(pb.next_starts_page && empty_closing_mark(p));
     if broke_before {
         pb.new_page(block, body_top);
     }
